@@ -5,21 +5,117 @@ import mysql from 'mysql2/promise'
 dotenv.config();
 const app = express();
 const PORT = 3000;
+app.use(express.json());
+let db;
 
-const db = await mysql.createConnection({
-    host: process.env.DB_HOST,
-    user: process.env.DB_USER,
-    password: process.env.DB_PASSWORD,
-    database: process.env.DB_DATABASE
-});
+try{
+    db = await mysql.createConnection({
+        host: process.env.DB_HOST,
+        user: process.env.DB_USER,
+        password: process.env.DB_PASSWORD,
+        database: process.env.DB_DATABASE
+    });
+    console.log("Connected to Database");
+}catch(err){
+    console.log("DB connection failed: ", err );
+}
 
-db.connect((err)=>{
-    if(err){
-        console.log("DB connection failed: ", err );
-    }else{
-        console.log("Connected to Database");
+
+
+app.post('/identify', async(req, res)=>{
+    // try catch
+    const {email, phoneNumber} = req.body;
+    console.log("email= ",email," phoneNumber= " ,phoneNumber);
+    if(!email && !phoneNumber){
+        return res.status(400).json({success:false, message:"You must enter either email or phoneNumber or both"});
     }
-});
+
+    const [rows] = await db.execute(`
+            SELECT *
+            FROM Contact 
+            WHERE email=? OR phoneNumber=? ;    
+        `,[email || null, phoneNumber || null]);
+      
+
+    const emailSet = new Set();
+    const phoneNumberSet = new Set();
+    const secondaryContactIdsSet = new Set();
+    let primaryContactId;
+    let primaryEmail;
+    let primaryPhoneNumber;
+    
+    for(let row of rows){
+        if(row.linkPrecedence=='primary'){
+            primaryContactId = row.id;
+            if(row.email) {
+                primaryEmail = row.email;
+                emailSet.add(row.email);
+            }
+            if(row.phoneNumber){
+                primaryPhoneNumber = row.phoneNumber;
+                phoneNumberSet.add(row.phoneNumber);
+            } 
+        }
+        else{
+            primaryContactId = row.linkedId;
+            if(row.email) {
+                emailSet.add(row.email);
+            }
+            if(row.phoneNumber){
+                phoneNumberSet.add(row.phoneNumber);
+            } 
+            if(row.id) secondaryContactIdsSet.add(row.id);
+        }
+    }
+
+    const [linkedRows] = await db.execute(`
+            SELECT * FROM Contact
+            WHERE id = ? OR linkedId = ?;
+        `, [primaryContactId || null, primaryContactId || null]);
+    
+    for(let row of linkedRows){
+        if(row.linkPrecedence=='primary'){
+            if(row.email) {
+                primaryEmail = row.email;
+                emailSet.add(row.email);
+            }
+            if(row.phoneNumber){
+                primaryPhoneNumber = row.phoneNumber;
+                phoneNumberSet.add(row.phoneNumber);
+            } 
+        }
+        else{
+            if(row.email) emailSet.add(row.email);
+            if(row.phoneNumber) phoneNumberSet.add(row.phoneNumber);
+            if(row.id) secondaryContactIdsSet.add(row.id);
+        }
+
+    }
+
+    let secondaryContactIds = [...secondaryContactIdsSet];
+    let emails = [...emailSet];
+    // remove the primary email
+    if(primaryEmail) emails = emails.filter((item) => item!=primaryEmail);
+    // remove the primary phone number
+    let phoneNumbers = [...phoneNumberSet];
+    if(primaryPhoneNumber) phoneNumbers = phoneNumbers.filter((number)=> number!=primaryPhoneNumber); 
+
+    //add the primary phone number and email in the start
+    emails.unshift(primaryEmail);
+    phoneNumbers.unshift(primaryPhoneNumber);
+   
+
+    const response = {
+        "contact": {
+            "primaryContactId" : primaryContactId,
+            "emails": emails,
+            "phoneNumbers": phoneNumbers,
+            "secondaryContactIds": secondaryContactIds 
+        }
+    }
+
+    res.status(200).send(response);
+})
 
 app.get('/', (req, res)=>{
     res.send("Api working");
