@@ -36,6 +36,26 @@ app.post('/identify', async(req, res)=>{
             WHERE email=? OR phoneNumber=? ;    
         `,[email || null, phoneNumber || null]);
       
+    
+    if(rows.length === 0){
+        // There are no existing contact against an incoming request
+        const [result] = await db.execute(`
+            INSERT INTO Contact (email, phoneNumber,linkPrecedence) VALUES
+            (?,?,'primary')
+            `,[email || null, phoneNumber || null]);
+        
+        const newContactId = result.id;
+        const response = {
+            "contact": {
+                "primaryContactId" : newContactId,
+                "emails" : email ? [email] : [],
+                "phoneNumbers": phoneNumber ? [phoneNumber] : [],
+                "secondaryContactIds": [] 
+            }
+        }
+        return res.status(201).json(response);
+    }
+
 
     const emailSet = new Set();
     const phoneNumberSet = new Set();
